@@ -111,7 +111,7 @@ if env.TARGET not in ["sim", "tsim"]:
     # the host, make sure you've set the variables below to the IP of
     # your board.
     device_host = os.environ.get("VTA_RPC_HOST", "192.168.1.27")
-    device_port = os.environ.get("VTA_RPC_PORT", "9092")
+    device_port = os.environ.get("VTA_RPC_PORT", "9091")
     if not tracker_host or not tracker_port:
         remote = rpc.connect(device_host, int(device_port))
     else:
