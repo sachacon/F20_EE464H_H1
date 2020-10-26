@@ -1,0 +1,7 @@
+tunings/*
+logs/*
+.pkl_memoize_py3/*
+.idea/*
+
+!tunings/.gitkeep
+!logs/.gitkeep
