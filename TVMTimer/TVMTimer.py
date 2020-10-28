@@ -1,49 +1,113 @@
 # TVMTimer Code
 # Copied most of this from tvm.apache.org/docs
-# Import the necessary packages
-from consolemenu import *
-from consolemenu.items import *
-import mxnet as mx
-import tvm
-import tvm.relay as relay
 
 supportedPlatforms = ['x86']
 supportedBackend = ['MXNet', 'PyTorch', 'TensorFlow']
-supportedModels = ['Resnet18', 'InceptionV1', 'MobileNet']
-pictures = ["pictures/roland.jpg", "pictures/whiteclaw.jpg", "pictures/riley.jpg", "pictures/kanye.jpg"]
+supportedModels = ['Resnet', 'InceptionV1', 'MobileNet']
 
-# The number of times to run this function for taking average. We call these runs as one repeat of measurement
-numrun = 3
+# pictures = ["pictures/roland.jpg", "pictures/whiteclaw.jpg", "pictures/riley.jpg", "pictures/kanye.jpg"]
 
-# The number of times to repeat the measurement. In total, the function will be invoked (1 + number x repeat) times,
-# where the first one is warm up and will be discarded. The returned result contains repeat costs, each of which is
-# an average of number costs.
-rept = 5
+# Create the menu interface
+def get_menu(title, options=None, subtitle=None, default=-1):
+    from os import system
+    system("clear")
+    print("\n──────────────────────────── TVMUI ────────────────────────────\n")
+    print(title + "\n")
+    if subtitle is not None:
+        print(subtitle + "\n")
+    i = 1
+    if options is not None:
+        print("Select an option below:\n")
+        for opt in options:
+            print(str(i) + ") " + opt)
+            i = i + 1
 
+    inp = input("\n>> ")
+    if inp == '':
+        inp = default
+    else:
+        inp = int(inp)
+    system("clear")
+    if options is not None:
+        if -1 < inp < i:
+            return inp - 1
+        else:
+            return get_menu(title, options, subtitle)
+    else:
+        return inp
+
+def get_pics(batch):
+    from os import listdir
+    pics = listdir("pictures/")
+    nubpics = int(int(len(pics)/batch)*batch)
+    rtn = []
+    i = 0
+    for pic in pics:
+        rtn.append("pictures/" + pic)
+        i = i+1
+        if i >= nubpics:
+            break
+    return rtn
+# run timings
+def log_print(file, message):
+    print(message)
+    file.write(message + '\n')
 
 def run_timing():
-    from matplotlib import pyplot as plt
-    from PIL import Image
-    import numpy as np
-    import os.path
-    from tvm.contrib.download import download_testdata
 
-    plat = SelectionMenu.get_selection(supportedPlatforms, "Pick a platform from below", show_exit_option=False)
-    back = SelectionMenu.get_selection(supportedBackend, "Pick a backend from below", show_exit_option=False)
-    modl = SelectionMenu.get_selection(supportedModels, "Pick a model from below", show_exit_option=False)
-    auto = SelectionMenu.get_selection(["Yes", "No"], "Use AutoTVM Tunings?", show_exit_option=False)
-    print("Run# " + str(plat) + str(back) + str(modl) + str(auto))
+    plat = get_menu("Pick a platform from below", supportedPlatforms)
+    back = get_menu("Pick a backend from below", supportedBackend)
+    md = get_menu("Pick a model from below", supportedModels)
+    auto = get_menu("Use AutoTVM Tunings?", ["Yes", "No"])
+    batch = get_menu("Number of pictures to run at once? (Default 1)", default=1)
+    run = get_menu("Number of times to run this inference for taking average (Default 3)", default=3)
+    reps = get_menu("Number of times to repeat this measurement (Default 5)", default=5)
+    filenm = "logs/TVMTime_" + supportedPlatforms[plat] + "_" + supportedModels[back] + "_" + supportedModels[md] + "_"
+    if auto == 0:
+        filenm = filenm + "A"
+    else:
+        filenm = filenm + "N"
+    filenm = filenm + str(batch) + str(run) + str(reps)
+    log = open(filenm + '.log', 'w+')
+    print("\n──────────────────────────── TVMUI ────────────────────────────\n")
+    from cpuinfo import get_cpu_info
+    from datetime import datetime
+    log.write("TVM Time Trial\n")
+    log_print(log, "Started on " + str(datetime.now().strftime("%m/%d/%Y at %H:%M:%S")))
+    log_print(log, 'Hardware: ' + supportedPlatforms[plat])
+    if plat == 0:
+        log_print(log, 'CPU Type: ' + get_cpu_info().get('brand_raw'))
+    log_print(log, 'Backend: ' + supportedBackend[back])
+    log_print(log, 'Model: ' + supportedModels[md])
+    log_print(log, str(batch) + " picture(s) per run")
+    log_print(log, str(run) + " run average, repeated " + str(reps) + " times.")
+    if auto == 0:
+        log_print(log, 'AutoTVM: Yes\n')
+    else:
+        log_print(log, 'AutoTVM: No\n')
+
+    print("Loading models and images...")
+    import numpy as np
+    from PIL import Image
+    from tvm import relay
+    import tvm
+    pictures = get_pics(batch)
     dataset = []
-    if (back == 0):
+    if back == 0:
         from mxnet.gluon.model_zoo.vision import get_model
-        print("Loading model and images...")
-        if (modl == 0):
+        from tvm.contrib.download import download_testdata
+
+        if md == 0:
             model_name = "resnet18_v1"
-        if (modl == 1):
+        elif md == 1:
             model_name = "inceptionv3"
-        if (modl == 2):
+        elif md == 2:
             model_name = "mobilenetv2_1.0"
+        else:
+            raise Exception('Not supported!')
+
         block = get_model(model_name, pretrained=True)
+
         synset_url = "".join(
             [
                 "https://gist.githubusercontent.com/zhreshold/",
@@ -66,11 +130,13 @@ def run_timing():
 
         for img in pictures:
             dataset.append(transform_image(Image.open(img).resize((224, 224))))
-        shape_dict = {"data": dataset[0].shape}
+        input_shape =[batch, 3, 224, 224]
+        shape_dict = {"data": input_shape}
+
         mod, params = relay.frontend.from_mxnet(block, shape_dict)
-        ## we want a probability so add a softmax operator
         func = mod["main"]
         func = relay.Function(func.params, relay.nn.softmax(func.body), None, func.type_params, func.attrs)
+
     if (back == 1):
         import torch
         import torchvision
@@ -178,29 +244,50 @@ def run_timing():
         mod, params = relay.frontend.from_tensorflow(graph_def, layout=None, shape=shape_dict)
 
     target = "llvm"
-    atvfile = ""
-    if (auto == 0):
-        if (back == 0):
-            atvfile = "tunings/mxnet_graph_opt.log"
-        with tvm.autotvm.apply_graph_best(atvfile):
+    log_print(log, 'Target: ' + target)
+    log_print(log, 'Actual Model: ' + model_name + '\n')
+    print('Making the graph...')
+    if auto == 0:
+        from tvm import autotvm
+        if back == 0:
+            if md == 0:
+                atvfile = "tunings/mxnet_Resnet_graph_opt.log"
+            elif md == 2:
+                atvfile = "tunings/mxnet_MobileNet_graph_opt.log"
+            else:
+                Exception('Not supported!')
+        else:
+            Exception('Not supported!')
+        log_print(log, 'Using AutoTVM file ' + atvfile)
+        with autotvm.apply_graph_best(atvfile):
             with tvm.transform.PassContext(opt_level=3):
                 lib = relay.build(func, target, params=params)
     else:
         with tvm.transform.PassContext(opt_level=3):
             lib = relay.build(func, target, params=params)
+
+    print("\nSetting up TVM...")
     from tvm.contrib import graph_runtime
     ctx = tvm.cpu(0)
-    if (modl == 0 or modl == 2):
+    if md == 0 or md == 2:
         dtype = "float32"
-    if (modl == 1):
+    if md == 1:
         dtype = "uint8"
     m = graph_runtime.GraphModule(lib["default"](ctx))
 
     def runTVM(input, number, repeat):
-        m.set_input("data", tvm.nd.array(input.astype(dtype)))
+        arr = np.ndarray(shape=input_shape, dtype=dtype)
+        i = 0
+        for ip in input:
+            arr[i] = ip.astype(dtype)
+            i = i+1
+        m.set_input("data", tvm.nd.array(arr))
         time = m.module.time_evaluator("run", ctx, number=number, repeat=repeat)()
+        res = []
         if (back == 0):
-            res = synset[np.argmax(m.get_output(0).asnumpy()[0])]
+            i = 0
+            for i in range(len(input)):
+                res.append(synset[np.argmax(m.get_output(0).asnumpy()[i])])
         if (back == 1):
             # Get top-1 result for TVM
             top1_tvm = np.argmax(m.get_output(0).asnumpy()[0])
@@ -221,41 +308,28 @@ def run_timing():
             top_k = pre.argsort()[-5:][::-1]
             res = node_lookup.id_to_string(top_k[0])
         return [time, res]
+
     output = []
-    out = ""
-    cnt = 0;
-    for runa in dataset:
-        output.append(runTVM(runa,numrun,rept))
-        out = out + "Image " + str(cnt+1) + ", which looks like a " + output[cnt][1] + ", took an average of " + str('%.2f' % (1000*(output[cnt][0].mean))) + " ms to identify. "
-        cnt = cnt + 1
-    filenm = 'logs/time-' + supportedPlatforms[plat] + '-' + supportedBackend[back] + '-' + supportedModels[modl]
-    atvm = "No"
-    if (auto == 0):
-        filenm = filenm + "-AUTO"
-        atvm = "Yes"
-    with open(filenm + '.log', 'w+') as logout:
-        logout.write('TVM Timing Record\n')
-        logout.write('Hardware: ' + supportedPlatforms[plat] + '\n')
-        if (plat == 0):
-            from cpuinfo import get_cpu_info
-            logout.write('CPU Type: ' + get_cpu_info().get('brand_raw') + '\n')
-        logout.write('Backend: ' + supportedBackend[back] + '\n')
-        logout.write('Model: ' + supportedModels[modl] + '\n')
-        logout.write('Actual Model: ' + model_name + '\n')
-        logout.write('AutoTVM: ' + atvm + '\n')
-        i = 0
-        ave = 0
-        for outs in output:
-            i = i + 1
-            logout.write("\nPicture " + str(i) + "\n")
-            logout.write("ID: " + outs[1] + '\n')
-            logout.write("Inference time: " + str(1000*(outs[0].mean)) + '\n')
-            ave = ave + (1000*(outs[0].mean))
-        ave = ave/i
-        logout.write('\nAVERAGE TIME: ' + str(ave))
-        logout.close()
-    resultMenu = ConsoleMenu("Results", prologue_text=out)
-    resultMenu.show()
+    total = 0
+    print("\nRunning inferences...")
+    for i in range(int(len(dataset)/batch)):
+        log_print(log, "\nSet " + str(i) + ":")
+        inp = []
+        for j in range(batch):
+            inp.append(dataset[batch*i + j])
+        output.append(runTVM(inp, run, reps))
+        e = 0
+        for rl in output[i][1]:
+            log_print(log, "Image " + str(e+1) + " Path: " + pictures[batch*i + e])
+            log_print(log, "Image " + str(e+1) + " ID: " + rl)
+            e = e+1
+        log_print(log, "Time taken: " + str('%.2f' % (1000 * (output[i][0].mean))) + " ms")
+        total = total + output[i][0].mean
+    ave = total / int(len(dataset)/batch)
+    log_print(log, '\nAVERAGE TIME: ' + str(ave * 1000) + " ms")
+    log_print(log, "Finished on " + str(datetime.now().strftime("%m/%d/%Y at %H:%M:%S")))
+    log.close()
+    # resultMenu.show()
     return
 
 
@@ -277,7 +351,8 @@ def run_tuning():
     model = SelectionMenu.get_selection(["Resnet", "VGG", "MobileNet", "Squeezenet", "Inception", "MXNet"],
                                         "Which model do you want to tune?", show_exit_option=False)
     if model == 5:
-        submod = SelectionMenu.get_selection(supportedModels,"Which submodel do you want to tune?", show_exit_option=False)
+        submod = SelectionMenu.get_selection(supportedModels, "Which submodel do you want to tune?",
+                                             show_exit_option=False)
     core = SelectionMenu.get_selection(["1", "2", "3", "4", "5", "6", "7", "8"], "How many cores do you want to use?",
                                        show_exit_option=False) + 1
 
@@ -494,8 +569,11 @@ def run_tuning():
     return
 
 
-# Create the menu
-go = SelectionMenu.get_selection(["Record a time", "Create a tuning"], "TVM Time Recorder", "Pick a option from below")
+go = get_menu("Tensor Virtual Machine User Interface (TVMUI)", ["Record a time", "Create a tuning", "Exit"], "A visual "
+                                                                                                             "recording "
+                                                                                                             "and tuning tool "
+                                                                                                             "for "
+                                                                                                             "TVM")
 if (go == 0):
     run_timing()
 if (go == 1):
