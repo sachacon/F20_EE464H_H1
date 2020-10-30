@@ -3,9 +3,7 @@
 
 supportedPlatforms = ['x86']
 supportedBackend = ['MXNet', 'PyTorch', 'TensorFlow']
-supportedModels = ['Resnet', 'InceptionV1', 'MobileNet']
-
-# pictures = ["pictures/roland.jpg", "pictures/whiteclaw.jpg", "pictures/riley.jpg", "pictures/kanye.jpg"]
+supportedModels = ['Resnet', 'Inception', 'MobileNet']
 
 # Create the menu interface
 def get_menu(title, options=None, subtitle=None, default=-1):
@@ -36,30 +34,48 @@ def get_menu(title, options=None, subtitle=None, default=-1):
     else:
         return inp
 
+
 def get_pics(batch):
     from os import listdir
     pics = listdir("pictures/")
-    nubpics = int(int(len(pics)/batch)*batch)
+    nubpics = int(int(len(pics) / batch) * batch)
     rtn = []
     i = 0
     for pic in pics:
         rtn.append("pictures/" + pic)
-        i = i+1
+        i = i + 1
         if i >= nubpics:
             break
     return rtn
+
+def get_tunes(plat, back, mod, batch=1):
+    from os import listdir
+    tunes = listdir("tunings/")
+    rtn = []
+    for tune in tunes:
+            if supportedPlatforms[plat] in tune and supportedBackend[back] in tune and supportedModels[mod] in tune and str(batch) in tune:
+                rtn.append("tunings/" + tune)
+            elif supportedPlatforms[plat] in tune and supportedBackend[back] in tune and supportedModels[mod] in tune:
+                rtn.append("tunings/" + tune)
+            elif supportedPlatforms[plat] in tune and supportedModels[mod] in tune:
+                rtn.append("tunings/" + tune)
+    return rtn
+
 # run timings
 def log_print(file, message):
     print(message)
     file.write(message + '\n')
 
-def run_timing():
 
+def run_timing():
     plat = get_menu("Pick a platform from below", supportedPlatforms)
     back = get_menu("Pick a backend from below", supportedBackend)
     md = get_menu("Pick a model from below", supportedModels)
-    auto = get_menu("Use AutoTVM Tunings?", ["Yes", "No"])
     batch = get_menu("Number of pictures to run at once? (Default 1)", default=1)
+    auto = get_menu("Use AutoTVM Tunings?", ["Yes", "No"])
+    if auto == 0:
+        tunesfiles = get_tunes(plat,back,md,batch)
+        atvfile = tunesfiles[get_menu("Which file should be used for AutoTVM?", tunesfiles)]
     run = get_menu("Number of times to run this inference for taking average (Default 3)", default=3)
     reps = get_menu("Number of times to repeat this measurement (Default 5)", default=5)
     filenm = "logs/TVMTime_" + supportedPlatforms[plat] + "_" + supportedModels[back] + "_" + supportedModels[md] + "_"
@@ -91,11 +107,11 @@ def run_timing():
     from PIL import Image
     from tvm import relay
     import tvm
+    from tvm.contrib.download import download_testdata
     pictures = get_pics(batch)
     dataset = []
     if back == 0:
         from mxnet.gluon.model_zoo.vision import get_model
-        from tvm.contrib.download import download_testdata
 
         if md == 0:
             model_name = "resnet18_v1"
@@ -130,29 +146,31 @@ def run_timing():
 
         for img in pictures:
             dataset.append(transform_image(Image.open(img).resize((224, 224))))
-        input_shape =[batch, 3, 224, 224]
+        input_shape = [batch, 3, 224, 224]
         shape_dict = {"data": input_shape}
 
         mod, params = relay.frontend.from_mxnet(block, shape_dict)
         func = mod["main"]
         func = relay.Function(func.params, relay.nn.softmax(func.body), None, func.type_params, func.attrs)
-
-    if (back == 1):
+    elif back == 1:
         import torch
         import torchvision
-        if (modl == 0):
+        if md == 0:
             model_name = "resnet18"
-        if (modl == 1):
+        elif md == 1:
             model_name = "inceptionv3"
-        if (modl == 2):
+        elif md == 2:
             model_name = "mobilenetv2_1.0"
+        else:
+            raise Exception('Not Supported!')
         model = getattr(torchvision.models, model_name)(pretrained=True)
         model = model.eval()
 
         # We grab the TorchScripted model via tracing
-        input_shape = [1, 3, 224, 224]
+        input_shape = [batch, 3, 224, 224]
         input_data = torch.randn(input_shape)
         scripted_model = torch.jit.trace(model, input_data).eval()
+
         synset_url = "".join(
             [
                 "https://raw.githubusercontent.com/Cadene/",
@@ -164,7 +182,6 @@ def run_timing():
         synset_path = download_testdata(synset_url, synset_name, module="data")
         with open(synset_path) as f:
             synsets = f.readlines()
-
         synsets = [x.strip() for x in synsets]
         splits = [line.split(" ") for line in synsets]
         key_to_classname = {spl[0]: " ".join(spl[1:]) for spl in splits}
@@ -180,7 +197,6 @@ def run_timing():
         class_path = download_testdata(class_url, class_name, module="data")
         with open(class_path) as f:
             class_id_to_key = f.readlines()
-
         class_id_to_key = [x.strip() for x in class_id_to_key]
 
         def transform_image(image):
@@ -199,11 +215,13 @@ def run_timing():
 
         for img in pictures:
             dataset.append(transform_image(Image.open(img).resize((224, 224))))
+
         input_name = "data"
-        shape_list = [(input_name, dataset[0].shape)]
+        shape_list = [(input_name, input_shape)]
         func, params = relay.frontend.from_pytorch(scripted_model, shape_list)
-    if (back == 2):
+    elif back == 2:
         import tensorflow as tf
+        import os
 
         try:
             tf_compat_v1 = tf.compat.v1
@@ -239,9 +257,11 @@ def run_timing():
                 graph_def = tf_testing.AddShapesToGraphDef(sess, "softmax")
         for img in pictures:
             dataset.append(np.array(Image.open(img).resize((299, 299))))
-        shape_dict = {"data": dataset[0].shape}
+        shape_dict = {"data": [batch, 3, 299, 299]}
         dtype_dict = {"DecodeJpeg/contents": "uint8"}
         mod, params = relay.frontend.from_tensorflow(graph_def, layout=None, shape=shape_dict)
+    else:
+        raise Exception('Not Supported!')
 
     target = "llvm"
     log_print(log, 'Target: ' + target)
@@ -249,15 +269,6 @@ def run_timing():
     print('Making the graph...')
     if auto == 0:
         from tvm import autotvm
-        if back == 0:
-            if md == 0:
-                atvfile = "tunings/mxnet_Resnet_graph_opt.log"
-            elif md == 2:
-                atvfile = "tunings/mxnet_MobileNet_graph_opt.log"
-            else:
-                Exception('Not supported!')
-        else:
-            Exception('Not supported!')
         log_print(log, 'Using AutoTVM file ' + atvfile)
         with autotvm.apply_graph_best(atvfile):
             with tvm.transform.PassContext(opt_level=3):
@@ -280,28 +291,19 @@ def run_timing():
         i = 0
         for ip in input:
             arr[i] = ip.astype(dtype)
-            i = i+1
+            i = i + 1
         m.set_input("data", tvm.nd.array(arr))
         time = m.module.time_evaluator("run", ctx, number=number, repeat=repeat)()
         res = []
         if (back == 0):
-            i = 0
             for i in range(len(input)):
                 res.append(synset[np.argmax(m.get_output(0).asnumpy()[i])])
         if (back == 1):
             # Get top-1 result for TVM
-            top1_tvm = np.argmax(m.get_output(0).asnumpy()[0])
-            tvm_class_key = class_id_to_key[top1_tvm]
-
-            # Convert input to PyTorch variable and get PyTorch result for comparison
-            with torch.no_grad():
-                torch_img = torch.from_numpy(input)
-                output = model(torch_img)
-
-                # Get top-1 result for PyTorch
-                top1_torch = np.argmax(output.numpy())
-                torch_class_key = class_id_to_key[top1_torch]
-            res = key_to_classname[tvm_class_key] + "/" + key_to_classname[torch_class_key]
+            for i in range(len(input)):
+                top1_tvm = np.argmax(m.get_output(0).asnumpy()[i])
+                tvm_class_key = class_id_to_key[top1_tvm]
+                res.append(key_to_classname[tvm_class_key])
         if (back == 2):
             pre = np.squeeze(m.get_output(0, tvm.nd.empty(((1, 1008)), "float32")).asnumpy())
             node_lookup = tf_testing.NodeLookup(label_lookup_path=map_proto_path, uid_lookup_path=label_path)
@@ -312,20 +314,20 @@ def run_timing():
     output = []
     total = 0
     print("\nRunning inferences...")
-    for i in range(int(len(dataset)/batch)):
-        log_print(log, "\nSet " + str(i) + ":")
+    for i in range(int(len(dataset) / batch)):
+        log_print(log, "\nSet " + str(i+1) + ":")
         inp = []
         for j in range(batch):
-            inp.append(dataset[batch*i + j])
+            inp.append(dataset[batch * i + j])
         output.append(runTVM(inp, run, reps))
         e = 0
         for rl in output[i][1]:
-            log_print(log, "Image " + str(e+1) + " Path: " + pictures[batch*i + e])
-            log_print(log, "Image " + str(e+1) + " ID: " + rl)
-            e = e+1
+            log_print(log, "Image " + str(e + 1) + " Path: " + pictures[batch * i + e])
+            log_print(log, "Image " + str(e + 1) + " ID: " + rl)
+            e = e + 1
         log_print(log, "Time taken: " + str('%.2f' % (1000 * (output[i][0].mean))) + " ms")
         total = total + output[i][0].mean
-    ave = total / int(len(dataset)/batch)
+    ave = total / int(len(dataset) / batch)
     log_print(log, '\nAVERAGE TIME: ' + str(ave * 1000) + " ms")
     log_print(log, "Finished on " + str(datetime.now().strftime("%m/%d/%Y at %H:%M:%S")))
     log.close()
@@ -336,36 +338,29 @@ def run_timing():
 def run_tuning():
     import os
     import numpy as np
-
-    import tvm
-    from tvm import te
     from tvm import autotvm
-    from tvm import relay
     from tvm.relay import testing
     from tvm.autotvm.tuner import XGBTuner, GATuner, RandomTuner, GridSearchTuner
     from tvm.autotvm.graph_tuner import DPTuner, PBQPTuner
     import tvm.contrib.graph_runtime as runtime
+    from datetime import datetime
 
-    pat = SelectionMenu.get_selection(supportedPlatforms, "Which platform do you want to tune?",
-                                      show_exit_option=False);
-    model = SelectionMenu.get_selection(["Resnet", "VGG", "MobileNet", "Squeezenet", "Inception", "MXNet"],
-                                        "Which model do you want to tune?", show_exit_option=False)
+    tunemods = ["Resnet", "VGG", "MobileNet", "Squeezenet", "Inception", "MXNet"]
+    tuners = ["XGBoost","Genetic Algorithm","Random","Grid Search"]
+    gtuners = ["DPTuner", "PBQPTuner"]
+
+    pat = get_menu("Which platform do you want to tune?", supportedPlatforms)
+    model = get_menu("Which model do you want to tune?", tunemods)
     if model == 5:
-        submod = SelectionMenu.get_selection(supportedModels, "Which submodel do you want to tune?",
-                                             show_exit_option=False)
-    core = SelectionMenu.get_selection(["1", "2", "3", "4", "5", "6", "7", "8"], "How many cores do you want to use?",
-                                       show_exit_option=False) + 1
-
-    #################################################################
-    # Define network
-    # --------------
-    # First we need to define the network in relay frontend API.
-    # We can either load some pre-defined network from :code:`relay.testing`
-    # or building :any:`relay.testing.resnet` with relay.
-    # We can also load models from MXNet, ONNX and TensorFlow.
-    #
-    # In this tutorial, we choose resnet-18 as tuning example.
-
+        submod = get_menu("Which submodel do you want to tune?", supportedModels)
+    tunes = get_menu("Which kernel tuner do you want to use?", tuners)
+    gtuner = get_menu("Which graph tuner do you want to use?", gtuners)
+    batch = get_menu("How many pictures should be run at a time?")
+    core = get_menu("How many cores should be used at a time?")
+    print("\n──────────────────────────── TVMUI ────────────────────────────\n")
+    print("Started on " + str(datetime.now().strftime("%m/%d/%Y at %H:%M:%S")))
+    from tvm import relay
+    import tvm
     def get_network(name, batch_size):
         """Get the symbol definition and random weight of a network"""
         input_shape = (batch_size, 3, 224, 224)
@@ -376,29 +371,39 @@ def run_tuning():
             mod, params = relay.testing.resnet.get_workload(
                 num_layers=n_layer, batch_size=batch_size, dtype=dtype
             )
+            print("Tuning ResNet")
         elif "vgg" in name:
             n_layer = int(name.split("-")[1])
             mod, params = relay.testing.vgg.get_workload(
                 num_layers=n_layer, batch_size=batch_size, dtype=dtype
             )
+            print("Tuning VGG")
         elif name == "mobilenet":
             mod, params = relay.testing.mobilenet.get_workload(batch_size=batch_size, dtype=dtype)
+            print("Tuning MobileNet")
         elif name == "squeezenet_v1.1":
             mod, params = relay.testing.squeezenet.get_workload(
                 batch_size=batch_size, version="1.1", dtype=dtype
             )
+            print("Tuning SqueezeNet")
         elif name == "inception_v3":
             input_shape = (1, 3, 299, 299)
             mod, params = relay.testing.inception_v3.get_workload(batch_size=batch_size, dtype=dtype)
+            print("Tuning Inception")
         elif name == "mxnet":
             # an example for mxnet model
             from mxnet.gluon.model_zoo.vision import get_model
-            if (submod == 0):
+            if submod == 0:
                 modn = "resnet18_v1"
-            if (submod == 1):
+                print("Tuning MXNet's ResNet")
+            elif submod == 1:
                 modn = "inceptionv3"
-            if (submod == 2):
+                print("Tuning MXNet's Inception")
+            elif submod == 2:
                 modn = "mobilenetv2_1.0"
+                print("Tuning MXNet's MobileNet")
+            else:
+                raise Exception("Not Supported!")
             block = get_model(modn, pretrained=True)
             mod, params = relay.frontend.from_mxnet(block, shape={input_name: input_shape}, dtype=dtype)
             net = mod["main"]
@@ -411,36 +416,48 @@ def run_tuning():
 
         return mod, params, input_shape, output_shape
 
-    # Replace "llvm" with the correct target of your CPU.
-    # For example, for AWS EC2 c5 instance with Intel Xeon
-    # Platinum 8000 series, the target should be "llvm -mcpu=skylake-avx512".
-    # For AWS EC2 c4 instance with Intel Xeon E5-2666 v3, it should be
-    # "llvm -mcpu=core-avx2".
     target = "llvm"
+    print("Using LLVM")
 
-    batch_size = 1
-    submd = ""
-    if (model == 0):
+    batch_size = batch
+    if model == 0:
         dtype = "float32"
         model_name = "resnet-18"
-    if (model == 1):
+    elif model == 1:
         dtype = "float32"
         model_name = "vgg-18"
-    if (model == 2):
+    elif model == 2:
         dtype = "float32"
         model_name = "mobilenet"
-    if (model == 3):
+    elif model == 3:
         dtype = "float32"
         model_name = "squeezenet_v1.1"
-    if (model == 4):
+    elif model == 4:
         dtype = "float32"
         model_name = "inception_v3"
-    if (model == 5):
+    elif model == 5:
         dtype = "float32"
         model_name = "mxnet"
-        submd = supportedModels[submod]
-    log_file = "logs/" + model_name + "_" + submd + ".log"
-    graph_opt_sch_file = "tunings/" + model_name + "_" + submd + "_graph_opt.log"
+    else:
+        raise Exception('Not Supported!')
+    filename = "TVMTune_" + supportedPlatforms[pat] + "_" + tunemods[model]
+    if model == 5:
+        filename = filename + "_" + supportedModels[submod]
+    filename = filename + "_" + str(batch)
+    if tunes == 0:
+        filename = filename + "_XG"
+    elif tunes == 1:
+        filename = filename + "_GA"
+    elif tunes == 2:
+        filename = filename + "_RD"
+    elif tunes == 3:
+        filename = filename + "_GS"
+    if gtuner == 0:
+        filename = filename + "DP"
+    elif gtuner == 1:
+        filename = filename + "PB"
+    log_file = "logs/" + filename + ".log"
+    graph_opt_sch_file = "tunings/" + filename + "_graph_opt.log"
 
     # Set the input name of the graph
     # For ONNX models, it is typically "0".
@@ -490,19 +507,23 @@ def run_tuning():
             prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
 
             # create tuner
-            if tuner == "xgb" or tuner == "xgb-rank":
+            if tunes == 0:
                 tuner_obj = XGBTuner(task, loss_type="rank")
-            elif tuner == "ga":
+                #print("Using XGBTuner")
+            elif tunes == 1:
                 tuner_obj = GATuner(task, pop_size=50)
-            elif tuner == "random":
+                #print("Using GATuner")
+            elif tunes == 2:
                 tuner_obj = RandomTuner(task)
-            elif tuner == "gridsearch":
+                #print("Using Random")
+            elif tunes == 3:
                 tuner_obj = GridSearchTuner(task)
+                #print("Using GridSearch")
             else:
                 raise ValueError("Invalid tuner: " + tuner)
 
             # do tuning
-            n_trial = len(task.config_space)
+            n_trial = 2#len(task.config_space)
             tuner_obj.tune(
                 n_trial=n_trial,
                 early_stopping=early_stopping,
@@ -519,7 +540,12 @@ def run_tuning():
         target_op = [
             relay.op.get("nn.conv2d"),
         ]
-        Tuner = DPTuner if use_DP else PBQPTuner
+        if gtuner == 0:
+            Tuner = DPTuner
+            #print("Using DPTuner")
+        else:
+            Tuner = PBQPTuner
+            #print("Using PBQPTuner")
         executor = Tuner(graph, {input_name: dshape}, records, target_op, target)
         executor.benchmark_layout_transform(min_exec_num=2000)
         executor.run()
