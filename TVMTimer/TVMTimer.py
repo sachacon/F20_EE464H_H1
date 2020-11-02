@@ -1,7 +1,7 @@
 # TVMTimer Code
 # Copied most of this from tvm.apache.org/docs
 
-supportedPlatforms = ['x86']
+supportedPlatforms = ['x86','Metal']
 supportedBackend = ['MXNet', 'PyTorch', 'TensorFlow']
 supportedModels = ['Resnet', 'Inception', 'MobileNet']
 
@@ -263,7 +263,10 @@ def run_timing():
     else:
         raise Exception('Not Supported!')
 
-    target = "llvm"
+    if plat == 0:
+        target = "llvm"
+    if plat == 1:
+        target = "metal"
     log_print(log, 'Target: ' + target)
     log_print(log, 'Actual Model: ' + model_name + '\n')
     print('Making the graph...')
@@ -279,7 +282,10 @@ def run_timing():
 
     print("\nSetting up TVM...")
     from tvm.contrib import graph_runtime
-    ctx = tvm.cpu(0)
+    if(plat == 0):
+        ctx = tvm.cpu(0)
+    if (plat == 1):
+        ctx = tvm.metal(0)
     if md == 0 or md == 2:
         dtype = "float32"
     if md == 1:
@@ -416,9 +422,12 @@ def run_tuning():
 
         return mod, params, input_shape, output_shape
 
-    target = "llvm"
-    print("Using LLVM")
-
+    if pat == 0:
+        target = "llvm"
+        print("Using LLVM")
+    if pat == 1:
+        target = "metal"
+        print("Using metal")
     batch_size = batch
     if model == 0:
         dtype = "float32"
@@ -523,7 +532,7 @@ def run_tuning():
                 raise ValueError("Invalid tuner: " + tuner)
 
             # do tuning
-            n_trial = 2#len(task.config_space)
+            n_trial = len(task.config_space)
             tuner_obj.tune(
                 n_trial=n_trial,
                 early_stopping=early_stopping,
@@ -573,7 +582,10 @@ def run_tuning():
                 lib = relay.build_module.build(mod, target=target, params=params)
 
             # upload parameters to device
-            ctx = tvm.cpu()
+            if pat == 0:
+                ctx = tvm.cpu()
+            if pat == 1:
+                ctx = tvm.metal()
             data_tvm = tvm.nd.array((np.random.uniform(size=data_shape)).astype(dtype))
             module = runtime.GraphModule(lib["default"](ctx))
             module.set_input(input_name, data_tvm)
