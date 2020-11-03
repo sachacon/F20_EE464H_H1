@@ -1,13 +1,33 @@
-# TVMTimer Code
-# Copied most of this from tvm.apache.org/docs
+"""
+TVM Timer and Tuning Interface
 
-supportedPlatforms = ['x86','Metal']
-supportedBackend = ['MXNet', 'PyTorch', 'TensorFlow']
-supportedModels = ['Resnet', 'Inception', 'MobileNet']
+This timing and tuning software was make to help the progress of a
+senior design project that involves testing and comparing the
+inference times of image classifications on multiple models
+and backends. Running this script will allow you to pick
+from various platforms and backends.
 
-# Create the menu interface
+Below are the supported platforms, backends, and models.
+"""
+
+supportedDevices = ['x86', 'Metal', 'Remote']
+supportedPlatforms = ['MXNet', 'PyTorch', 'TensorFlow']
+supportedModels = ['resnet18_v1', 'inceptionv3', 'mobilenetv2_1.0']
+
+
 def get_menu(title, options=None, subtitle=None, default=-1):
+    """
+    A function the generates a menu that users can select from.
+
+    :param title: The title of the menu
+    :param options: The array of options for the menu. Leave blank to get a integer input
+    :param subtitle: The subtitle of the menu
+    :param default: The default if nothing is returned
+    :return: The position in the array of the object chosen or the number inputted
+    """
+
     from os import system
+
     system("clear")
     print("\n──────────────────────────── TVMUI ────────────────────────────\n")
     print(title + "\n")
@@ -36,93 +56,172 @@ def get_menu(title, options=None, subtitle=None, default=-1):
 
 
 def get_pics(batch):
+    """
+    Get the paths of the pictures in the "pictures" folder to create a
+    group divisible to batch.
+
+    :param batch: The number the returned set should be divisible by
+    :return: The array of paths to the pictures
+    """
     from os import listdir
     pics = listdir("pictures/")
-    nubpics = int(int(len(pics) / batch) * batch)
+    nub_pics = int(int(len(pics) / batch) * batch)
     rtn = []
     i = 0
     for pic in pics:
         rtn.append("pictures/" + pic)
         i = i + 1
-        if i >= nubpics:
+        if i >= nub_pics:
             break
     return rtn
 
-def get_tunes(plat, back, mod, batch=1):
+
+def get_tunes(device, plat, mod, batch=1):
+    """
+    Gets the supported auto-tuned loggs for a given setup
+
+    :param device: The supported platform
+    :param plat: The supported backend
+    :param mod: The supported model
+    :param batch: The size of each run
+    :return: The supported log paths. May return close matches that
+             work if no match is found
+    """
     from os import listdir
     tunes = listdir("tunings/")
     rtn = []
     for tune in tunes:
-            if supportedPlatforms[plat] in tune and supportedBackend[back] in tune and supportedModels[mod] in tune and str(batch) in tune:
-                rtn.append("tunings/" + tune)
-            elif supportedPlatforms[plat] in tune and supportedBackend[back] in tune and supportedModels[mod] in tune:
-                rtn.append("tunings/" + tune)
-            elif supportedPlatforms[plat] in tune and supportedModels[mod] in tune:
-                rtn.append("tunings/" + tune)
+        if supportedDevices[device] in tune and supportedPlatforms[plat] in tune and supportedModels[
+            mod] in tune and str(
+            batch) in tune:
+            rtn.append("tunings/" + tune)
+        elif supportedDevices[device] in tune and supportedPlatforms[plat] in tune and supportedModels[mod] in tune:
+            rtn.append("tunings/" + tune)
+        elif supportedDevices[device] in tune and supportedModels[mod] in tune:
+            rtn.append("tunings/" + tune)
     return rtn
 
-# run timings
+
 def log_print(file, message):
+    """
+    Print to the console and a file at the same time
+
+    :param file: The file to print to
+    :param message: The message
+    """
     print(message)
     file.write(message + '\n')
 
 
-def run_timing():
-    plat = get_menu("Pick a platform from below", supportedPlatforms)
-    back = get_menu("Pick a backend from below", supportedBackend)
-    md = get_menu("Pick a model from below", supportedModels)
-    batch = get_menu("Number of pictures to run at once? (Default 1)", default=1)
+def get_remotes():
+    """
+    Gets the remote settings from remotes.json
+
+    :return: The array of data from remotes.json
+    """
+    import json
+    f = open("remotes.json")
+    return json.load(f)
+
+
+def tvm_timer():
+    """
+    Sets up and runes a time trail for TVM. Uses menus to get your selection
+    and then runs those selections
+    """
+    device = get_menu("Select a supported device", supportedDevices)
+    if supportedDevices[device] == "Remote":
+        remotes = get_remotes()
+        if len(remotes) == 0:
+            get_menu("No remote devices!")
+            return tvm_timer()
+        remotes_names = []
+        for i in remotes:
+            remotes_names.append(i['name'])
+        remote = remotes[get_menu("Pick a remote device", remotes_names)]
+    ml_plat = get_menu("Select a machine learning platform", supportedPlatforms)
+    ml_mod = get_menu("Select a pretrained model", supportedModels)
+    batch = get_menu("How many pictures should be run at once? (Default 1)", default=1)
+    runs = get_menu("How many times should this be run through the model (Default 3)", default=3)
+    reps = get_menu("How many times should this measurement be repeated (Default 5)", default=5)
     auto = get_menu("Use AutoTVM Tunings?", ["Yes", "No"])
+    tuned_log = None
     if auto == 0:
-        tunesfiles = get_tunes(plat,back,md,batch)
-        atvfile = tunesfiles[get_menu("Which file should be used for AutoTVM?", tunesfiles)]
-    run = get_menu("Number of times to run this inference for taking average (Default 3)", default=3)
-    reps = get_menu("Number of times to repeat this measurement (Default 5)", default=5)
-    filenm = "logs/TVMTime_" + supportedPlatforms[plat] + "_" + supportedModels[back] + "_" + supportedModels[md] + "_"
+        tune_logs = get_tunes(device, ml_plat, ml_mod, batch)
+        tuned_log = tune_logs[get_menu("Which file should be used for AutoTVM?", tune_logs)]
+    file_name = "logs/TVMTime_" + supportedDevices[device] + "_"
+    if supportedDevices[device] == "Remote":
+        file_name = file_name + remote["type"] + "_"
+    file_name = file_name + supportedPlatforms[ml_plat] + "_" + supportedModels[ml_mod] + "_"
     if auto == 0:
-        filenm = filenm + "A"
+        file_name = file_name + "A"
     else:
-        filenm = filenm + "N"
-    filenm = filenm + str(batch) + str(run) + str(reps)
-    log = open(filenm + '.log', 'w+')
-    print("\n──────────────────────────── TVMUI ────────────────────────────\n")
+        file_name = file_name + "N"
+    file_name = file_name + str(batch) + str(runs) + str(reps)
+    log = open(file_name + '.log', 'w+')
+    if supportedDevices[device] == "Remote":
+        run_timing(remote["hardware"], supportedPlatforms[ml_plat], supportedModels[ml_mod], remote, tuned_log, batch,
+                   runs, reps, log)
+    else:
+        run_timing(supportedDevices[device], supportedPlatforms[ml_plat], supportedModels[ml_mod], None, tuned_log,
+                   batch, runs, reps, log)
+
+
+def run_timing(device, platform, model, remote=None, autotvm_log=None, batch=1, runs=3, reps=5, log=None):
+    """
+    Run a time trail on TVM
+
+    :param device: The device to run this on
+    :param platform: The platform get the machine learning model on
+    :param model: The machine learning model to use
+    :param remote: Details about the remote device
+    :param autotvm_log: The path to the auto TVM file
+    :param batch: The number of pictures to run in one go
+    :param runs: The number of runs to run the picture through
+    :param reps: The number of times the measurement should be repeated
+    :param log: The output file
+    """
+
+    # Output details of run
     from cpuinfo import get_cpu_info
     from datetime import datetime
+
+    print("\n──────────────────────────── TVMUI ────────────────────────────\n")
     log.write("TVM Time Trial\n")
     log_print(log, "Started on " + str(datetime.now().strftime("%m/%d/%Y at %H:%M:%S")))
-    log_print(log, 'Hardware: ' + supportedPlatforms[plat])
-    if plat == 0:
-        log_print(log, 'CPU Type: ' + get_cpu_info().get('brand_raw'))
-    log_print(log, 'Backend: ' + supportedBackend[back])
-    log_print(log, 'Model: ' + supportedModels[md])
-    log_print(log, str(batch) + " picture(s) per run")
-    log_print(log, str(run) + " run average, repeated " + str(reps) + " times.")
-    if auto == 0:
-        log_print(log, 'AutoTVM: Yes\n')
+    if remote is None:
+        log_print(log, 'Hardware: ' + device)
+        if device == 'x86':
+            log_print(log, 'CPU Type: ' + get_cpu_info().get('brand_raw'))
     else:
+        log_print(log, 'Remote Name: ' + remote["name"])
+        log_print(log, 'Remote Device: ' + remote["type"])
+        log_print(log, 'Remote Hardware: ' + remote["hardware"])
+    log_print(log, 'Backend: ' + platform)
+    log_print(log, 'Model: ' + model)
+    log_print(log, str(batch) + " picture(s) per run")
+    log_print(log, str(runs) + " run average, repeated " + str(reps) + " times.")
+    if autotvm_log is None:
         log_print(log, 'AutoTVM: No\n')
+    else:
+        log_print(log, 'AutoTVM: Yes\n')
 
-    print("Loading models and images...")
+    # Get the model and image data
     import numpy as np
     from PIL import Image
     from tvm import relay
     import tvm
     from tvm.contrib.download import download_testdata
+
+    print("Loading models and images...")
+
     pictures = get_pics(batch)
     dataset = []
-    if back == 0:
+
+    if platform == "MXNet":
         from mxnet.gluon.model_zoo.vision import get_model
 
-        if md == 0:
-            model_name = "resnet18_v1"
-        elif md == 1:
-            model_name = "inceptionv3"
-        elif md == 2:
-            model_name = "mobilenetv2_1.0"
-        else:
-            raise Exception('Not supported!')
-
-        block = get_model(model_name, pretrained=True)
+        block = get_model(model, pretrained=True)
 
         synset_url = "".join(
             [
@@ -144,26 +243,29 @@ def run_timing():
             image = image[np.newaxis, :]
             return image
 
-        for img in pictures:
-            dataset.append(transform_image(Image.open(img).resize((224, 224))))
-        input_shape = [batch, 3, 224, 224]
+        if model == 'resnet18_v1' or model == 'mobilenetv2_1.0':
+            for img in pictures:
+                dataset.append(transform_image(Image.open(img).resize((224, 224))))
+            input_shape = [batch, 3, 224, 224]
+
+        elif model == 'inceptionv3':
+            for img in pictures:
+                dataset.append(transform_image(Image.open(img).resize((299, 299))))
+            input_shape = [batch, 3, 299, 299]
+        else:
+            raise Exception("Invalid Model")
+
         shape_dict = {"data": input_shape}
 
         mod, params = relay.frontend.from_mxnet(block, shape_dict)
         func = mod["main"]
         func = relay.Function(func.params, relay.nn.softmax(func.body), None, func.type_params, func.attrs)
-    elif back == 1:
+
+    elif platform == "PyTorch":
         import torch
         import torchvision
-        if md == 0:
-            model_name = "resnet18"
-        elif md == 1:
-            model_name = "inceptionv3"
-        elif md == 2:
-            model_name = "mobilenetv2_1.0"
-        else:
-            raise Exception('Not Supported!')
-        model = getattr(torchvision.models, model_name)(pretrained=True)
+
+        model = getattr(torchvision.models, model)(pretrained=True)
         model = model.eval()
 
         # We grab the TorchScripted model via tracing
@@ -219,7 +321,7 @@ def run_timing():
         input_name = "data"
         shape_list = [(input_name, input_shape)]
         func, params = relay.frontend.from_pytorch(scripted_model, shape_list)
-    elif back == 2:
+    elif platform == "TensorFlow":
         import tensorflow as tf
         import os
 
@@ -263,17 +365,25 @@ def run_timing():
     else:
         raise Exception('Not Supported!')
 
-    if plat == 0:
+    # Build the graph
+    if device == 'x86':
         target = "llvm"
-    if plat == 1:
+        ctx = tvm.cpu(0)
+        log_print(log, 'Target: ' + target)
+    if device == 'Metal':
         target = "metal"
-    log_print(log, 'Target: ' + target)
-    log_print(log, 'Actual Model: ' + model_name + '\n')
+        ctx = tvm.metal(0)
+        log_print(log, 'Target: ' + target)
+    if device == 'arm_cpu':
+        target = tvm.target.arm_cpu(remote["type"])
+        ctx = tvm.cpu(0)
+        log_print(log, 'Target: ' + remote["type"])
+    log_print(log, 'Actual Model: ' + model + '\n')
     print('Making the graph...')
-    if auto == 0:
+    if autotvm_log is not None:
         from tvm import autotvm
-        log_print(log, 'Using AutoTVM file ' + atvfile)
-        with autotvm.apply_graph_best(atvfile):
+        log_print(log, 'Using AutoTVM file ' + autotvm_log)
+        with autotvm.apply_graph_best(autotvm_log):
             with tvm.transform.PassContext(opt_level=3):
                 lib = relay.build(func, target, params=params)
     else:
@@ -282,62 +392,94 @@ def run_timing():
 
     print("\nSetting up TVM...")
     from tvm.contrib import graph_runtime
-    if(plat == 0):
-        ctx = tvm.cpu(0)
-    if (plat == 1):
-        ctx = tvm.metal(0)
-    if md == 0 or md == 2:
-        dtype = "float32"
-    if md == 1:
-        dtype = "uint8"
+
+    # Remote upload
+    if remote is not None:
+        from tvm import rpc
+        from tvm.contrib import utils, graph_runtime as runtime
+        print("Exporting graph...")
+        tmp = utils.tempdir()
+        lib_fname = tmp.relpath("net.tar")
+        lib.export_library(lib_fname)
+        print("Connecting to device...")
+        remote = rpc.connect(str(remote["ip"]), int(remote["port"]))
+        print("Uploading to device...")
+        remote.upload(lib_fname)
+        lib = remote.load_module("net.tar")
+        if device == 'x86':
+            ctx = remote.cpu(0)
+        elif device == 'Metal':
+            ctx = remote.metal(0)
+        elif device == 'arm_cpu':
+            ctx = remote.cpu(0)
+
+    dtype = "float32"
     m = graph_runtime.GraphModule(lib["default"](ctx))
 
-    def runTVM(input, number, repeat):
+    def run_tvm(pics, number, repeat):
+        """
+        Runs a single inference and gives back the time
+
+        :param pics: The images(s) to run
+        :param number: The number of times to run the inference
+        :param repeat:  The number of times to repeat the measurement
+        :return: An array with the time and the result
+        """
+
+        # combine pictures
         arr = np.ndarray(shape=input_shape, dtype=dtype)
-        i = 0
-        for ip in input:
-            arr[i] = ip.astype(dtype)
-            i = i + 1
+        p = 0
+        for ip in pics:
+            arr[p] = ip.astype(dtype)
+            p = p + 1
         m.set_input("data", tvm.nd.array(arr))
+
+        #Actually run inference
         time = m.module.time_evaluator("run", ctx, number=number, repeat=repeat)()
+
+        #Get output
         res = []
-        if (back == 0):
-            for i in range(len(input)):
+        if platform == 'MXNet':
+            for i in range(len(pics)):
                 res.append(synset[np.argmax(m.get_output(0).asnumpy()[i])])
-        if (back == 1):
+        if platform == 'PyTorch':
             # Get top-1 result for TVM
-            for i in range(len(input)):
+            for i in range(len(pics)):
                 top1_tvm = np.argmax(m.get_output(0).asnumpy()[i])
                 tvm_class_key = class_id_to_key[top1_tvm]
                 res.append(key_to_classname[tvm_class_key])
-        if (back == 2):
+        if platform == 'TensorFlow':
             pre = np.squeeze(m.get_output(0, tvm.nd.empty(((1, 1008)), "float32")).asnumpy())
             node_lookup = tf_testing.NodeLookup(label_lookup_path=map_proto_path, uid_lookup_path=label_path)
             top_k = pre.argsort()[-5:][::-1]
             res = node_lookup.id_to_string(top_k[0])
         return [time, res]
 
+    # Run the inferences
     output = []
     total = 0
+
     print("\nRunning inferences...")
     for i in range(int(len(dataset) / batch)):
-        log_print(log, "\nSet " + str(i+1) + ":")
+        log_print(log, "\nSet " + str(i + 1) + ":")
         inp = []
+        # Create the next batch
         for j in range(batch):
             inp.append(dataset[batch * i + j])
-        output.append(runTVM(inp, run, reps))
+        # Run inference here
+        output = run_tvm(inp, runs, reps)
+        # Output results
         e = 0
-        for rl in output[i][1]:
+        for rl in output[1]:
             log_print(log, "Image " + str(e + 1) + " Path: " + pictures[batch * i + e])
             log_print(log, "Image " + str(e + 1) + " ID: " + rl)
             e = e + 1
-        log_print(log, "Time taken: " + str('%.2f' % (1000 * (output[i][0].mean))) + " ms")
-        total = total + output[i][0].mean
+        log_print(log, "Time taken: " + str('%.2f' % (1000 * output[0].mean)) + " ms")
+        total = total + output[0].mean
     ave = total / int(len(dataset) / batch)
     log_print(log, '\nAVERAGE TIME: ' + str(ave * 1000) + " ms")
     log_print(log, "Finished on " + str(datetime.now().strftime("%m/%d/%Y at %H:%M:%S")))
     log.close()
-    # resultMenu.show()
     return
 
 
@@ -352,7 +494,7 @@ def run_tuning():
     from datetime import datetime
 
     tunemods = ["Resnet", "VGG", "MobileNet", "Squeezenet", "Inception", "MXNet"]
-    tuners = ["XGBoost","Genetic Algorithm","Random","Grid Search"]
+    tuners = ["XGBoost", "Genetic Algorithm", "Random", "Grid Search"]
     gtuners = ["DPTuner", "PBQPTuner"]
 
     pat = get_menu("Which platform do you want to tune?", supportedPlatforms)
@@ -518,16 +660,16 @@ def run_tuning():
             # create tuner
             if tunes == 0:
                 tuner_obj = XGBTuner(task, loss_type="rank")
-                #print("Using XGBTuner")
+                # print("Using XGBTuner")
             elif tunes == 1:
                 tuner_obj = GATuner(task, pop_size=50)
-                #print("Using GATuner")
+                # print("Using GATuner")
             elif tunes == 2:
                 tuner_obj = RandomTuner(task)
-                #print("Using Random")
+                # print("Using Random")
             elif tunes == 3:
                 tuner_obj = GridSearchTuner(task)
-                #print("Using GridSearch")
+                # print("Using GridSearch")
             else:
                 raise ValueError("Invalid tuner: " + tuner)
 
@@ -551,10 +693,10 @@ def run_tuning():
         ]
         if gtuner == 0:
             Tuner = DPTuner
-            #print("Using DPTuner")
+            # print("Using DPTuner")
         else:
             Tuner = PBQPTuner
-            #print("Using PBQPTuner")
+            # print("Using PBQPTuner")
         executor = Tuner(graph, {input_name: dshape}, records, target_op, target)
         executor.benchmark_layout_transform(min_exec_num=2000)
         executor.run()
@@ -613,6 +755,6 @@ go = get_menu("Tensor Virtual Machine User Interface (TVMUI)", ["Record a time",
                                                                                                              "for "
                                                                                                              "TVM")
 if (go == 0):
-    run_timing()
+    tvm_timer()
 if (go == 1):
     run_tuning()
