@@ -2,6 +2,7 @@ tunings/*
 logs/*
 .pkl_memoize_py3/*
 .idea/*
+remotes.json
 
 !tunings/.gitkeep
 !logs/.gitkeep

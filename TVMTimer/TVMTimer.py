@@ -370,14 +370,18 @@ def run_timing(device, platform, model, remote=None, autotvm_log=None, batch=1, 
         target = "llvm"
         ctx = tvm.cpu(0)
         log_print(log, 'Target: ' + target)
-    if device == 'Metal':
+    elif device == 'Metal':
         target = "metal"
         ctx = tvm.metal(0)
         log_print(log, 'Target: ' + target)
-    if device == 'arm_cpu':
+    elif device == 'arm_cpu':
         target = tvm.target.arm_cpu(remote["type"])
         ctx = tvm.cpu(0)
         log_print(log, 'Target: ' + remote["type"])
+    else:
+        target = device
+        ctx = tvm.cpu(0)
+        log_print(log, 'Target: ' + device)
     log_print(log, 'Actual Model: ' + model + '\n')
     print('Making the graph...')
     if autotvm_log is not None:
@@ -412,7 +416,8 @@ def run_timing(device, platform, model, remote=None, autotvm_log=None, batch=1, 
             ctx = remote.metal(0)
         elif device == 'arm_cpu':
             ctx = remote.cpu(0)
-
+        else:
+            ctx = remote.cpu(0)
     dtype = "float32"
     m = graph_runtime.GraphModule(lib["default"](ctx))
 
